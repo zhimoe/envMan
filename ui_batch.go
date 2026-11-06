@@ -97,13 +97,6 @@ func analyzeBatch(originalValue, text string) batchInfo {
 	return info
 }
 
-func (a *App) currentBatchTarget() (Variable, bool) {
-	if a.batch == nil {
-		return Variable{}, false
-	}
-	return a.findVariable(a.batch.scope, a.batch.target)
-}
-
 func (a *App) openBatch(preferred string) {
 	if a.batch != nil {
 		return

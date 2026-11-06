@@ -7,10 +7,6 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-func (a *App) icon(c *ui.Context, s *ui.SVG, size float32, color ui.Color) ui.Element {
-	return ui.Icon(c, s).Size(size, size).TextColor(color)
-}
-
 func (a *App) iconButtonBase(c *ui.Context, s *ui.SVG, tip string, size float32) ui.Element {
 	b := ui.ButtonBase(c).Size(size, size).Radius(5).Center().Cursor(ui.CursorPointer)
 	if tip != "" {
@@ -126,27 +122,8 @@ func (a *App) chip(c *ui.Context, text string, fg, bg ui.Color, size float32) ui
 	})
 }
 
-func (a *App) countChip(c *ui.Context, text string, active bool) ui.Element {
-	fg, bg := a.pal.text3, a.pal.surface3
-	if active {
-		fg, bg = a.pal.accentText, a.pal.accentSoft
-	}
-	return a.chip(c, text, fg, bg, 9)
-}
-
-func (a *App) statusDot(c *ui.Context, color ui.Color) ui.Element {
-	return ui.Box(c).Size(6, 6).Radius(99).Background(color)
-}
-
 func (a *App) sectionLabel(c *ui.Context, text string) {
 	ui.Text(c, text).FontSize(9.5).FontWeight(600).LetterSpacing(0.6).TextColor(a.pal.text3).Padding(0, 8)
-}
-
-func (a *App) scopeAccent(scope Scope) ui.Color {
-	if scope == ScopeSystem {
-		return a.pal.warn
-	}
-	return a.pal.accent
 }
 
 func (a *App) scopePill(c *ui.Context, scope Scope) {

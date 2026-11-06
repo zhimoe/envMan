@@ -62,17 +62,6 @@ $env:ENVMAN_WINDOWS_SYSTEM_INTEGRATION = "1"
 go test -count=1 -run '^TestWindowsSystemRegistryIntegration$' .
 ```
 
-如果验收机器没有 Go，可直接运行构建目录中的预编译测试程序（按机器架构选择目录）：
-
-```powershell
-$env:ENVMAN_WINDOWS_INTEGRATION = "1"
-.\build\windows-amd64\EnvMan-tests.exe -test.v -test.run '^TestWindowsUserRegistryIntegration$'
-```
-
-ARM64 机器将路径中的 `windows-amd64` 换成 `windows-arm64`。系统作用域测试同样需要
-管理员 PowerShell，并使用 `ENVMAN_WINDOWS_SYSTEM_INTEGRATION=1` 和
-`TestWindowsSystemRegistryIntegration`。
-
 安装器最终验收还应确认：标准权限启动不弹 UAC；只有保存系统变量时弹 UAC；
 提权重启后修改生效且待应用文件被清理；新开的终端能读到修改后的值。
 

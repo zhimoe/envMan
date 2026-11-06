@@ -88,15 +88,6 @@ func isBatchEditable(v Variable) bool {
 	return isMultiValue(v.Value) || isListLike(v.Name)
 }
 
-func trimTo(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if len([]rune(s)) <= n {
-		return s
-	}
-	r := []rune(s)
-	return string(r[:n]) + "…"
-}
-
 func (a *App) variables(scope Scope) []Variable {
 	if a.vars == nil {
 		return nil

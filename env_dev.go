@@ -89,5 +89,3 @@ func applyEnvChanges(scope Scope, before, desired []Variable) error {
 func elevated() bool { return true }
 
 func relaunchElevated(params string) error { return nil }
-
-func broadcastEnvChange() {}
