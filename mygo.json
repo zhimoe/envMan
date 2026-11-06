@@ -2,5 +2,6 @@
   "name": "EnvMan",
   "identifier": "dev.zhimoe.envman",
   "version": "0.1.0",
+  "main": "./cmd/envman",
   "out": "build"
 }

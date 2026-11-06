@@ -23,7 +23,7 @@ v0.7.4；所有 Go 依赖都提交在 `vendor/` 中。
 
 ```sh
 # 在当前平台运行；非 Windows 平台使用内置演示数据
-go run .
+go run ./cmd/envman
 
 # 运行交互测试和静态检查
 go test ./...
@@ -52,14 +52,14 @@ GOPROXY=off GOSUMDB=off go test -mod=vendor ./...
 
 ```powershell
 $env:ENVMAN_WINDOWS_INTEGRATION = "1"
-go test -count=1 -run '^TestWindowsUserRegistryIntegration$' .
+go test -count=1 -run '^TestWindowsUserRegistryIntegration$' ./internal/environment
 ```
 
 系统变量测试必须从“以管理员身份运行”的 PowerShell 执行：
 
 ```powershell
 $env:ENVMAN_WINDOWS_SYSTEM_INTEGRATION = "1"
-go test -count=1 -run '^TestWindowsSystemRegistryIntegration$' .
+go test -count=1 -run '^TestWindowsSystemRegistryIntegration$' ./internal/environment
 ```
 
 安装器最终验收还应确认：标准权限启动不弹 UAC；只有保存系统变量时弹 UAC；
@@ -86,8 +86,10 @@ UAC。注册表中的非字符串值不会被 EnvMan 删除。
 
 ## 项目结构
 
-- `env_windows.go`：Windows 注册表、UAC 和环境变化广播。
-- `actions.go` / `persist.go`：提交、撤销、备份和提权后续写入。
-- `ui_*.go`：MyGo 原生界面和交互。
-- `main_test.go`：无需创建窗口的 native UI 交互测试。
+- `cmd/envman/`：程序入口；`mygo.json` 的 `main` 字段指向此包。
+- `internal/app/`：MyGo 原生界面、应用状态和提交/撤销等流程编排。
+- `internal/domain/`：环境变量领域类型、差异计算和并发变更合并。
+- `internal/environment/`：Windows 注册表后端与非 Windows 内存后端。
+- `internal/storage/`：快照、待提权变更和设置的 JSON 持久化。
+- 各包内的 `*_test.go`：领域、平台、存储与 native UI 交互测试。
 - `vendor/`：应用与 MyGo 构建工具的完整依赖源码。

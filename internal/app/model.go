@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"fmt"
@@ -6,21 +6,6 @@ import (
 	"sort"
 	"strings"
 )
-
-// Scope is where an environment variable lives.
-type Scope int
-
-const (
-	ScopeUser Scope = iota
-	ScopeSystem
-)
-
-func (s Scope) String() string {
-	if s == ScopeSystem {
-		return "系统变量"
-	}
-	return "用户变量"
-}
 
 // ViewFilter selects which variables the table shows.
 type ViewFilter int
@@ -31,18 +16,6 @@ const (
 	ViewMulti
 	ViewRefs
 )
-
-// Variable is one environment variable.
-type Variable struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-	Type  string `json:"type,omitempty"`
-}
-
-// Key identifies a variable within a scope.
-func (v Variable) Key(scope Scope) string {
-	return fmt.Sprintf("%d\x00%s", scope, strings.ToLower(v.Name))
-}
 
 func varKey(scope Scope, name string) string {
 	return fmt.Sprintf("%d\x00%s", scope, strings.ToLower(name))

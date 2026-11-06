@@ -1,16 +1,21 @@
-package main
+package app
 
 import (
 	"fmt"
 	"os"
 	"strings"
 
+	"envman/internal/environment"
+	"envman/internal/storage"
+
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
 
 type App struct {
-	win *mygo.Window
+	win   *mygo.Window
+	env   environment.Backend
+	store *storage.Store
 
 	scope    Scope
 	filter   ViewFilter
@@ -86,8 +91,10 @@ type modalState struct {
 	onCancel  func()
 }
 
-func newApp() *App {
+func newAppWith(backend environment.Backend, store *storage.Store) *App {
 	a := &App{
+		env:         backend,
+		store:       store,
 		vars:        make(map[Scope][]Variable),
 		loadErrors:  make(map[Scope]string),
 		expanded:    make(map[string]bool),
@@ -95,12 +102,12 @@ func newApp() *App {
 		focusUser:   -1,
 		focusSystem: -1,
 	}
-	settings := loadSettings()
+	settings := a.loadSettings()
 	a.themeMode = parseThemeMode(settings.Theme)
 	if t := os.Getenv("ENVMAN_THEME"); t != "" {
 		a.themeMode = parseThemeMode(t)
 	}
-	a.admin = elevated()
+	a.admin = a.env.Elevated()
 	if v := os.Getenv("ENVMAN_ADMIN"); v == "0" {
 		a.admin = false
 	} else if v == "1" {
@@ -108,9 +115,9 @@ func newApp() *App {
 	}
 
 	var applied *PendingEdits
-	if p := readPending(); p != nil {
-		if elevated() {
-			current, err := loadEnv(p.Scope)
+	if p := a.store.ReadPending(); p != nil {
+		if a.env.Elevated() {
+			current, err := a.env.Load(p.Scope)
 			if err != nil {
 				a.startupToast = "提权后读取环境变量失败：" + err.Error()
 				a.pendingErr = true
@@ -119,18 +126,18 @@ func newApp() *App {
 				if p.Before != nil {
 					desired = mergeVariableChanges(current, p.Before, p.Variables)
 				}
-				if err := applyEnvChanges(p.Scope, current, desired); err != nil {
+				if err := a.env.ApplyChanges(p.Scope, current, desired); err != nil {
 					a.startupToast = "提权后应用更改失败：" + err.Error()
 					a.pendingErr = true
 				} else {
-					clearPending()
+					a.store.ClearPending()
 					applied = p
 				}
 			}
 		}
 	}
 	a.reload()
-	a.snapshots = loadSnapshots()
+	a.snapshots = a.store.LoadSnapshots()
 	a.expand(ScopeUser, "Path")
 	if applied != nil {
 		a.scope = applied.Scope
@@ -155,15 +162,15 @@ func newApp() *App {
 
 func (a *App) reload() {
 	for _, s := range []Scope{ScopeUser, ScopeSystem} {
-		vars, err := loadEnv(s)
+		vars, err := a.env.Load(s)
 		if err != nil {
-			a.loadErrors[s] = describeError(s, err)
+			a.loadErrors[s] = environment.DescribeError(s, err)
 			continue
 		}
 		a.vars[s] = vars
 		delete(a.loadErrors, s)
 	}
-	a.snapshots = loadSnapshots()
+	a.snapshots = a.store.LoadSnapshots()
 }
 
 func (a *App) view(c *ui.Context) {

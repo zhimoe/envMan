@@ -1,57 +1,13 @@
-package main
+package app
 
 import (
 	"fmt"
-	"slices"
 	"strings"
+
+	"envman/internal/storage"
 
 	"github.com/egoist/mygo"
 )
-
-func cloneVars(vars []Variable) []Variable {
-	return slices.Clone(vars)
-}
-
-// mergeVariableChanges applies only the changes between before and desired to
-// latest. Environment variables can be changed by installers and other tools
-// while EnvMan is open; preserving unrelated changes avoids overwriting them
-// with the table's older snapshot.
-func mergeVariableChanges(latest, before, desired []Variable) []Variable {
-	result := cloneVars(latest)
-	desiredByName := make(map[string]Variable, len(desired))
-	beforeByName := make(map[string]Variable, len(before))
-	for _, v := range before {
-		beforeByName[strings.ToLower(v.Name)] = v
-	}
-	for _, v := range desired {
-		desiredByName[strings.ToLower(v.Name)] = v
-	}
-
-	for name := range beforeByName {
-		if _, keep := desiredByName[name]; keep {
-			continue
-		}
-		for i := len(result) - 1; i >= 0; i-- {
-			if strings.EqualFold(result[i].Name, name) {
-				result = append(result[:i], result[i+1:]...)
-			}
-		}
-	}
-
-	for name, next := range desiredByName {
-		previous, existed := beforeByName[name]
-		if existed && previous == next {
-			continue
-		}
-		_, index := findVar(result, next.Name)
-		if index < 0 {
-			result = append(result, next)
-			continue
-		}
-		result[index] = next
-	}
-	return result
-}
 
 func (a *App) variablesWith(scope Scope, name, value string) ([]Variable, bool) {
 	out := cloneVars(a.variables(scope))
@@ -85,7 +41,7 @@ func (a *App) variablesWithout(scope Scope, names []string) []Variable {
 // a restart instead.
 func (a *App) commit(scope Scope, desired []Variable, note, success, focus string, before []Variable) bool {
 	if scope == ScopeSystem && !a.admin {
-		pending := PendingEdits{
+		pending := storage.PendingEdits{
 			Scope:     scope,
 			Note:      success,
 			Focus:     focus,
@@ -99,16 +55,16 @@ func (a *App) commit(scope Scope, desired []Variable, note, success, focus strin
 			confirm: "以管理员身份重启",
 			cancel:  "取消",
 			onConfirm: func() {
-				if _, err := takeSnapshot(scope, note); err != nil {
+				if _, err := a.takeSnapshot(scope, note); err != nil {
 					a.toast("创建备份失败，未应用更改：" + err.Error())
 					return
 				}
-				if err := writePending(pending); err != nil {
+				if err := a.store.WritePending(pending); err != nil {
 					a.toast("无法准备提权后的写入：" + err.Error())
 					return
 				}
-				if err := relaunchElevated("--data-dir=\"" + userDataDir() + "\""); err != nil {
-					clearPending()
+				if err := a.env.RelaunchElevated("--data-dir=\"" + a.store.Dir() + "\""); err != nil {
+					a.store.ClearPending()
 					a.toast("未获得管理员权限：" + err.Error())
 					return
 				}
@@ -118,7 +74,7 @@ func (a *App) commit(scope Scope, desired []Variable, note, success, focus strin
 		return false
 	}
 
-	snapshot, err := takeSnapshot(scope, note)
+	snapshot, err := a.takeSnapshot(scope, note)
 	if err != nil {
 		a.toast("创建备份失败，未应用更改：" + err.Error())
 		return false
@@ -127,7 +83,7 @@ func (a *App) commit(scope Scope, desired []Variable, note, success, focus strin
 	if before != nil {
 		toWrite = mergeVariableChanges(snapshot.Variables, before, desired)
 	}
-	if err := applyEnvChanges(scope, snapshot.Variables, toWrite); err != nil {
+	if err := a.env.ApplyChanges(scope, snapshot.Variables, toWrite); err != nil {
 		a.toast("保存失败：" + err.Error())
 		return false
 	}
@@ -181,8 +137,8 @@ func (a *App) requestAdmin() {
 		confirm: "以管理员身份重启",
 		cancel:  "取消",
 		onConfirm: func() {
-			clearPending()
-			if err := relaunchElevated("--data-dir=\"" + userDataDir() + "\""); err != nil {
+			a.store.ClearPending()
+			if err := a.env.RelaunchElevated("--data-dir=\"" + a.store.Dir() + "\""); err != nil {
 				a.toast("未获得管理员权限：" + err.Error())
 				return
 			}

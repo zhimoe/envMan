@@ -1,31 +1,22 @@
 //go:build !windows
 
-package main
+package app
 
 import (
 	"fmt"
 	"strings"
 	"testing"
 
+	"envman/internal/environment"
+	"envman/internal/storage"
+
 	"github.com/egoist/mygo/ui"
 )
 
-func resetDevEnv(t *testing.T) {
-	t.Helper()
-	user := append([]Variable(nil), devVars[ScopeUser]...)
-	system := append([]Variable(nil), devVars[ScopeSystem]...)
-	t.Cleanup(func() {
-		devVars[ScopeUser] = user
-		devVars[ScopeSystem] = system
-	})
-}
-
 func newTestApp(t *testing.T) (*App, *ui.Tester) {
 	t.Helper()
-	previousDataDir := dataDirOverride
-	dataDirOverride = t.TempDir()
-	t.Cleanup(func() { dataDirOverride = previousDataDir })
-	a := newApp()
+	backend := environment.NewMemory(environment.DemoVariables())
+	a := newAppWith(backend, storage.New(t.TempDir()))
 	a.admin = true
 	a.themeMode = ThemeLight
 	a.scope = ScopeUser
@@ -34,6 +25,15 @@ func newTestApp(t *testing.T) (*App, *ui.Tester) {
 	a.expand(ScopeUser, "Path")
 	tt := ui.NewTester(a.view, 1180, 780)
 	return a, tt
+}
+
+func memoryBackend(t *testing.T, a *App) *environment.Memory {
+	t.Helper()
+	backend, ok := a.env.(*environment.Memory)
+	if !ok {
+		t.Fatalf("test app backend = %T, want *environment.Memory", a.env)
+	}
+	return backend
 }
 
 func TestMergeVariableChangesPreservesUnrelatedUpdates(t *testing.T) {
@@ -66,8 +66,11 @@ func TestMergeVariableChangesPreservesUnrelatedUpdates(t *testing.T) {
 }
 
 func TestApplyEnvChangesPreservesPostSnapshotUpdates(t *testing.T) {
-	resetDevEnv(t)
-	before := cloneVars(devVars[ScopeUser])
+	backend := environment.NewMemory(environment.DemoVariables())
+	before, err := backend.Load(ScopeUser)
+	if err != nil {
+		t.Fatal(err)
+	}
 	desired := cloneVars(before)
 	_, javaIndex := findVar(desired, "JAVA_HOME")
 	desired[javaIndex].Value = `C:\AppChange`
@@ -75,39 +78,44 @@ func TestApplyEnvChangesPreservesPostSnapshotUpdates(t *testing.T) {
 	desired = append(desired[:editorIndex], desired[editorIndex+1:]...)
 	desired = append(desired, Variable{Name: "ADDED_BY_APP", Value: "1", Type: "REG_SZ"})
 
-	_, cargoIndex := findVar(devVars[ScopeUser], "CARGO_HOME")
-	devVars[ScopeUser][cargoIndex].Value = `C:\ChangedAfterSnapshot`
-	_, goPathIndex := findVar(devVars[ScopeUser], "GOPATH")
-	devVars[ScopeUser] = append(devVars[ScopeUser][:goPathIndex], devVars[ScopeUser][goPathIndex+1:]...)
-	devVars[ScopeUser] = append(devVars[ScopeUser], Variable{
+	current := cloneVars(before)
+	_, cargoIndex := findVar(current, "CARGO_HOME")
+	current[cargoIndex].Value = `C:\ChangedAfterSnapshot`
+	_, goPathIndex := findVar(current, "GOPATH")
+	current = append(current[:goPathIndex], current[goPathIndex+1:]...)
+	current = append(current, Variable{
 		Name: "ADDED_AFTER_SNAPSHOT", Value: "external", Type: "REG_SZ",
 	})
+	backend.Replace(ScopeUser, current)
 
-	if err := applyEnvChanges(ScopeUser, before, desired); err != nil {
+	if err := backend.ApplyChanges(ScopeUser, before, desired); err != nil {
 		t.Fatal(err)
 	}
-	if java, _ := findVar(devVars[ScopeUser], "JAVA_HOME"); java.Value != `C:\AppChange` {
+	after, err := backend.Load(ScopeUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if java, _ := findVar(after, "JAVA_HOME"); java.Value != `C:\AppChange` {
 		t.Fatalf("requested update was not applied: %+v", java)
 	}
-	if _, index := findVar(devVars[ScopeUser], "EDITOR"); index >= 0 {
+	if _, index := findVar(after, "EDITOR"); index >= 0 {
 		t.Fatal("requested deletion was not applied")
 	}
-	if _, index := findVar(devVars[ScopeUser], "ADDED_BY_APP"); index < 0 {
+	if _, index := findVar(after, "ADDED_BY_APP"); index < 0 {
 		t.Fatal("requested addition was not applied")
 	}
-	if cargo, _ := findVar(devVars[ScopeUser], "CARGO_HOME"); cargo.Value != `C:\ChangedAfterSnapshot` {
+	if cargo, _ := findVar(after, "CARGO_HOME"); cargo.Value != `C:\ChangedAfterSnapshot` {
 		t.Fatalf("unrelated update was overwritten: %+v", cargo)
 	}
-	if _, index := findVar(devVars[ScopeUser], "GOPATH"); index >= 0 {
+	if _, index := findVar(after, "GOPATH"); index >= 0 {
 		t.Fatal("unrelated deletion was undone")
 	}
-	if _, index := findVar(devVars[ScopeUser], "ADDED_AFTER_SNAPSHOT"); index < 0 {
+	if _, index := findVar(after, "ADDED_AFTER_SNAPSHOT"); index < 0 {
 		t.Fatal("unrelated addition was removed")
 	}
 }
 
 func TestMainView(t *testing.T) {
-	resetDevEnv(t)
 	a, tt := newTestApp(t)
 	if !tt.HasText("用户变量") || !tt.HasText("CARGO_HOME") || !tt.HasText("PATH 路径") {
 		t.Fatalf("main view texts: %q", tt.Texts())
@@ -119,7 +127,6 @@ func TestMainView(t *testing.T) {
 }
 
 func TestSearch(t *testing.T) {
-	resetDevEnv(t)
 	_, tt := newTestApp(t)
 	if err := tt.Click("搜索变量名或值"); err != nil {
 		t.Fatal(err)
@@ -131,7 +138,6 @@ func TestSearch(t *testing.T) {
 }
 
 func TestEditAndSave(t *testing.T) {
-	resetDevEnv(t)
 	a, tt := newTestApp(t)
 	v, ok := a.findVariable(ScopeUser, "JAVA_HOME")
 	if !ok {
@@ -158,14 +164,20 @@ func TestEditAndSave(t *testing.T) {
 	if !tt.HasText("已保存") || !tt.HasText("撤销") {
 		t.Fatalf("undo toast missing: %q", tt.Texts())
 	}
-	for i := range devVars[ScopeUser] {
-		if strings.EqualFold(devVars[ScopeUser][i].Name, "CARGO_HOME") {
-			devVars[ScopeUser][i].Value = `C:\ChangedElsewhere`
+	backend := memoryBackend(t, a)
+	current, err := backend.Load(ScopeUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range current {
+		if strings.EqualFold(current[i].Name, "CARGO_HOME") {
+			current[i].Value = `C:\ChangedElsewhere`
 		}
 	}
-	devVars[ScopeUser] = append(devVars[ScopeUser], Variable{
+	current = append(current, Variable{
 		Name: "ADDED_ELSEWHERE", Value: "1", Type: "REG_SZ",
 	})
+	backend.Replace(ScopeUser, current)
 	if err := tt.Click("撤销"); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +196,6 @@ func TestEditAndSave(t *testing.T) {
 }
 
 func TestExpandValueUsesEffectiveScopeAndSkipsUnknownRefs(t *testing.T) {
-	resetDevEnv(t)
 	a, _ := newTestApp(t)
 
 	got := a.expandValue(`%UNKNOWN%;%TEMP%;%JAVA_HOME%`)
@@ -207,7 +218,6 @@ func TestAnalyzeBatchDetectsMixedReorder(t *testing.T) {
 }
 
 func TestCreateAndDuplicate(t *testing.T) {
-	resetDevEnv(t)
 	a, tt := newTestApp(t)
 	a.openCreate("ENVMAN_TEST")
 	tt.Frame()
@@ -236,7 +246,6 @@ func TestCreateAndDuplicate(t *testing.T) {
 }
 
 func TestBatchApply(t *testing.T) {
-	resetDevEnv(t)
 	a, tt := newTestApp(t)
 	a.openBatch("Path")
 	tt.Frame()
@@ -263,7 +272,6 @@ func TestBatchApply(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	resetDevEnv(t)
 	a, tt := newTestApp(t)
 	v, _ := a.findVariable(ScopeUser, "CARGO_HOME")
 	a.confirmDelete([]Variable{v})
@@ -281,7 +289,6 @@ func TestDelete(t *testing.T) {
 }
 
 func TestSelectionCheckbox(t *testing.T) {
-	resetDevEnv(t)
 	a, tt := newTestApp(t)
 	r, ok := tt.Find("CARGO_HOME")
 	if !ok {
@@ -313,7 +320,6 @@ func TestSelectionCheckbox(t *testing.T) {
 }
 
 func TestSortByName(t *testing.T) {
-	resetDevEnv(t)
 	a, tt := newTestApp(t)
 	ascending := a.filtered(ScopeUser)
 	if len(ascending) < 2 || ascending[0].Name != "CARGO_HOME" {
@@ -330,7 +336,6 @@ func TestSortByName(t *testing.T) {
 }
 
 func TestExpandAll(t *testing.T) {
-	resetDevEnv(t)
 	a, tt := newTestApp(t)
 	if err := tt.Click("展开全部多值"); err != nil {
 		t.Fatal(err)
@@ -352,7 +357,6 @@ func TestExpandAll(t *testing.T) {
 }
 
 func TestKeyboardExpandAndEdit(t *testing.T) {
-	resetDevEnv(t)
 	a, tt := newTestApp(t)
 	a.filter = ViewPath
 	a.setFocus(-1)
@@ -378,8 +382,8 @@ func TestKeyboardExpandAndEdit(t *testing.T) {
 }
 
 func TestBackupRestore(t *testing.T) {
-	resetDevEnv(t)
 	a, tt := newTestApp(t)
+	backend := memoryBackend(t, a)
 	old, _ := a.findVariable(ScopeUser, "JAVA_HOME")
 	vars := cloneVars(a.variables(ScopeUser))
 	for i := range vars {
@@ -387,10 +391,8 @@ func TestBackupRestore(t *testing.T) {
 			vars[i].Value = `C:\OldJava`
 		}
 	}
-	if err := replaceEnv(ScopeUser, vars); err != nil {
-		t.Fatal(err)
-	}
-	snap, err := takeSnapshot(ScopeUser, "测试快照")
+	backend.Replace(ScopeUser, vars)
+	snap, err := a.takeSnapshot(ScopeUser, "测试快照")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,9 +402,7 @@ func TestBackupRestore(t *testing.T) {
 			vars[i].Value = `C:\NewJava`
 		}
 	}
-	if err := replaceEnv(ScopeUser, vars); err != nil {
-		t.Fatal(err)
-	}
+	backend.Replace(ScopeUser, vars)
 	a.reload()
 	a.confirmRestore(nil, snap)
 	tt.Frame()
@@ -420,19 +420,17 @@ func TestBackupRestore(t *testing.T) {
 }
 
 func TestSnapshotRetentionAndPendingRoundTrip(t *testing.T) {
-	resetDevEnv(t)
-	previousDataDir := dataDirOverride
-	dataDirOverride = t.TempDir()
-	t.Cleanup(func() { dataDirOverride = previousDataDir })
+	store := storage.New(t.TempDir())
+	variables := environment.DemoVariables()[ScopeUser]
 
-	for i := range maxSnapshots + 5 {
-		if _, err := takeSnapshot(ScopeUser, fmt.Sprintf("snapshot-%02d", i)); err != nil {
+	for i := range storage.MaxSnapshots + 5 {
+		if _, err := store.SaveSnapshot(ScopeUser, fmt.Sprintf("snapshot-%02d", i), variables); err != nil {
 			t.Fatal(err)
 		}
 	}
-	snapshots := loadSnapshots()
-	if len(snapshots) != maxSnapshots {
-		t.Fatalf("snapshot count = %d, want %d", len(snapshots), maxSnapshots)
+	snapshots := store.LoadSnapshots()
+	if len(snapshots) != storage.MaxSnapshots {
+		t.Fatalf("snapshot count = %d, want %d", len(snapshots), storage.MaxSnapshots)
 	}
 	if snapshots[0].Note != "snapshot-24" || snapshots[len(snapshots)-1].Note != "snapshot-05" {
 		t.Fatalf("retained snapshot range = %q ... %q", snapshots[0].Note, snapshots[len(snapshots)-1].Note)
@@ -445,26 +443,26 @@ func TestSnapshotRetentionAndPendingRoundTrip(t *testing.T) {
 			{Name: "Path", Value: `C:\Pending`, Type: "REG_EXPAND_SZ"},
 		},
 	}
-	if err := writePending(pending); err != nil {
+	if err := store.WritePending(pending); err != nil {
 		t.Fatal(err)
 	}
-	got := readPending()
+	got := store.ReadPending()
 	if got == nil || got.Note != pending.Note || len(got.Variables) != 1 {
 		t.Fatalf("pending round trip = %+v", got)
 	}
-	clearPending()
-	if got := readPending(); got != nil {
+	store.ClearPending()
+	if got := store.ReadPending(); got != nil {
 		t.Fatalf("pending file survived clear: %+v", got)
 	}
 }
 
 func TestElevatedStartupAppliesPendingDiff(t *testing.T) {
-	resetDevEnv(t)
-	previousDataDir := dataDirOverride
-	dataDirOverride = t.TempDir()
-	t.Cleanup(func() { dataDirOverride = previousDataDir })
-
-	before := cloneVars(devVars[ScopeSystem])
+	backend := environment.NewMemory(environment.DemoVariables())
+	store := storage.New(t.TempDir())
+	before, err := backend.Load(ScopeSystem)
+	if err != nil {
+		t.Fatal(err)
+	}
 	desired := cloneVars(before)
 	_, pathIndex := findVar(desired, "Path")
 	desired[pathIndex].Value = `C:\PendingPath`
@@ -472,17 +470,19 @@ func TestElevatedStartupAppliesPendingDiff(t *testing.T) {
 		Scope: ScopeSystem, Note: "pending applied", Focus: "Path",
 		Before: before, Variables: desired,
 	}
-	if err := writePending(pending); err != nil {
+	if err := store.WritePending(pending); err != nil {
 		t.Fatal(err)
 	}
 
-	_, osIndex := findVar(devVars[ScopeSystem], "OS")
-	devVars[ScopeSystem][osIndex].Value = "Changed_Elsewhere"
-	devVars[ScopeSystem] = append(devVars[ScopeSystem], Variable{
+	current := cloneVars(before)
+	_, osIndex := findVar(current, "OS")
+	current[osIndex].Value = "Changed_Elsewhere"
+	current = append(current, Variable{
 		Name: "ADDED_ELSEWHERE", Value: "1", Type: "REG_SZ",
 	})
+	backend.Replace(ScopeSystem, current)
 
-	a := newApp()
+	a := newAppWith(backend, store)
 	path, _ := a.findVariable(ScopeSystem, "Path")
 	if path.Value != `C:\PendingPath` {
 		t.Fatalf("pending Path = %q", path.Value)
@@ -494,13 +494,12 @@ func TestElevatedStartupAppliesPendingDiff(t *testing.T) {
 	if _, ok := a.findVariable(ScopeSystem, "ADDED_ELSEWHERE"); !ok {
 		t.Fatal("pending apply removed unrelated variable")
 	}
-	if readPending() != nil {
+	if store.ReadPending() != nil {
 		t.Fatal("successfully applied pending edit was not cleared")
 	}
 }
 
 func TestScopeAndView(t *testing.T) {
-	resetDevEnv(t)
 	a, tt := newTestApp(t)
 	tt.Click("系统变量")
 	tt.Frame()

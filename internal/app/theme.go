@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"github.com/egoist/mygo"
@@ -221,11 +221,11 @@ func (a *App) toggleTheme() {
 }
 
 func (a *App) saveSettings() {
-	_ = writeJSON(settingsPath(), appSettings{Theme: a.themeMode.String()})
+	_ = a.store.SaveSettings(appSettings{Theme: a.themeMode.String()})
 }
 
-func loadSettings() appSettings {
-	var s appSettings
-	_ = readJSON(settingsPath(), &s)
-	return s
+func (a *App) loadSettings() appSettings {
+	var settings appSettings
+	_ = a.store.LoadSettings(&settings)
+	return settings
 }
